@@ -19,6 +19,7 @@
 //#include <boost/format.hpp>
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/variables_map.hpp>
+#include <boost/property_tree/json_parser.hpp>
 
 #include <iostream>
 #include <chrono>
@@ -412,7 +413,7 @@ namespace p2psp {
       uint16_t player_port = Console::GetDefaultPlayerPort();
       std::string splitter_addr = p2psp::Peer_core::GetDefaultSplitterAddr().to_string();
       uint16_t splitter_port = p2psp::Peer_core::GetDefaultSplitterPort();
-      std::string channel_url="RSET url";
+      std::string channel_url="REST url";
 #if not defined __IMS__
       int max_chunk_debt = p2psp::Peer_DBS::GetDefaultMaxChunkDebt();
       uint16_t team_port = p2psp::Peer_core::GetDefaultTeamPort();
@@ -424,7 +425,7 @@ namespace p2psp {
       // TODO: strpe option should expect a list of arguments, not bool
       desc.add_options()
         ("help,h", "Produce this help message and exits.")
-        ("channel_url",boost::program_options::value<string>()->default_value(channel_url),"Channel url to get splitter address from crossroads engine")
+        ("channel_url",boost::program_options::value<std::string>(),"Channel url to get splitter address from crossroads engine")//boost::program_options::value<string>()->default_value(channel_url),"Channel url to get splitter address from crossroads engine")
 #if not defined __IMS__
         ("max_chunk_debt", boost::program_options::value<int>()->default_value(max_chunk_debt), "Maximum number of times that other peer can not send a chunk to this peer.")
 #endif
@@ -521,54 +522,61 @@ namespace p2psp {
 
       // }}}
     }
-    if (vm.count("channel_url") || true) {
+    
+    if (vm.count("channel_url")) {
 		
 		TRACE("Channel URL =  "
 		<< vm["channel_url"].as<std::string>());
-		std::string splitter_source = peer->RESTSplitter(vm["channel_url"].as<std::string>());
-		int delimeter=splitter_source.find(":");
-		std::string splitter_addr = splitter_source.substr(0,delimeter);
-		std::string splitter_port=splitter_source.substr(delimeter+1);
-		peer->SetSplitterAddr(ip::address::from_string("127.0.0.1"));
-		TRACE("Splitter address = "
-	    << peer->GetSplitterAddr());
-		peer->SetSplitterPort(std::stoi(splitter_port));
-		TRACE("Splitter port = "
-		<< peer->GetSplitterPort());
+		std::stringstream ss;
+		ss<<peer->RESTSplitter(vm["channel_url"].as<std::string>());
+		boost::property_tree::ptree pt;
+		boost::property_tree::read_json(ss, pt);
+		boost::property_tree::ptree d=pt.get_child("splitterAddress");
+		std::vector<ip::address> splitter_addr;
+		std::vector<uint16_t> splitter_port;
+		
+		for (const std::pair<std::string, boost::property_tree::ptree> &p : d) {
+				std::string splitter_source=p.second.get_value<std::string>();
+				int delimeter=splitter_source.find(":");
+				splitter_addr.push_back(ip::address::from_string(splitter_source.substr(0,delimeter)));
+				splitter_port.push_back(std::stoi(splitter_source.substr(delimeter+1)));
+		}
+		peer->SetSplitterAddr(splitter_addr);
+		peer->SetSplitterPort(splitter_port);
 	}
 	
     peer->WaitForThePlayer();
     std::cout
       << "Player connected"
       << std::endl;
-    
-
-    if (vm.count("splitter_addr")) {
-      // {{{
-
-      peer->SetSplitterAddr(ip::address::from_string(vm["splitter_addr"].as<std::string>()));
-      TRACE("Splitter address = "
-	    << peer->GetSplitterAddr());
-
-      // }}}
-    }
-
-    if (vm.count("splitter_port")) {
-      // {{{
-
-      peer->SetSplitterPort(vm["splitter_port"].as<uint16_t>());
+      TRACE("Splitter Address = "
+	  << peer->GetSplitterAddr());      
       TRACE("Splitter port = "
-	  << peer->GetSplitterPort());
+	  << peer->GetSplitterPort());    
+
+    if (vm.count("splitter_addr") && !(vm.count("channel_url"))) {
+      // {{{
+
+      peer->SetSplitterAddr(vector<ip::address> {ip::address::from_string(vm["splitter_addr"].as<std::string>())});
 
       // }}}
     }
 
+    if (vm.count("splitter_port") && !(vm.count("channel_url"))) {
+      // {{{
+
+      peer->SetSplitterPort(vector<uint16_t> {vm["splitter_port"].as<uint16_t>()});
+
+      // }}}
+    }
+    
     peer->ConnectToTheSplitter();
-    TRACE("Connected to the splitter");
-    /*std::cout
-      << "Real splitter port = "
-      << peer->GetRealSplitterPort()
-      << std::endl;*/
+	TRACE("Connected to the splitter");
+	/*std::cout
+	  << "Real splitter port = "
+	  << peer->GetRealSplitterPort()
+	  << std::endl;*/
+    
 
     peer->ReceiveSourceEndpoint();
     TRACE("Source = ("
